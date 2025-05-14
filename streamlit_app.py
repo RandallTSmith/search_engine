@@ -71,16 +71,18 @@ df_reshaped = df_reshaped.sort_values(by="ASSERTED_YEAR", ascending=False)
 
 
 st.header("Search", divider=True)
-st.write("Try the following combinations: fox & hole, Jack & Jill, England & cricket, fox & cat, failure & diagnosis, fox & clever")
+st.write("Try the following combinations: fox & hole & rabbit, Jack & Jill & hill, England & cricket & weekend, fox & cat & over, failure & diagnosis & hypertension, fox & clever & jumped")
 
 # Use a text_input to get the keywords to filter the dataframe
-text_search1 = st.text_input("Primary Search", value="fox")
-text_search2 = st.text_input("Secondary Search", value="clever")
+text_search1 = st.text_input("Primary Search (Diagnosis)", value="fox")
+text_search2 = st.text_input("Secondary Search (Service)", value="pathologist")
+text_search3 = st.text_input("Tertiary Search (Issue)", value="clever")
 
 # Filter the dataframe using masks
 m1 = df_reshaped["NOTE_DESCRIPTION"].str.contains(text_search1)
 m2 = df_reshaped["NOTE_DESCRIPTION"].str.contains(text_search2)
-df_search = df_reshaped[m1 & m2]
+m3 = df_reshaped["NOTE_DESCRIPTION"].str.contains(text_search3)
+df_search = df_reshaped[m1 & m2 & m3]
 num_rec = df_search.shape[0]
 
 # Show the results, if you have a text_search
