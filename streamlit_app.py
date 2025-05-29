@@ -62,7 +62,7 @@ loss_type = st.multiselect(
 years = st.slider("Years", 1995, 2006, (2020, 2025))
 
 # Filter the dataframe based on the widget input and reshape it.
-df_filtered = df[(df["CLAIM_TYPE"].isin(claim_type)) & (df["CLAIM_TYPE"].isin(claim_type)) & (df["ASSERTED_YEAR"].between(years[0], years[1]))]
+df_filtered = df[(df["CLAIM_TYPE"].isin(claim_type)) & (df["LOSS_TYPE"].isin(loss_type)) & (df["ASSERTED_YEAR"].between(years[0], years[1]))]
 df_reshaped = df_filtered[['CLAIM_NO','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION']]
     #.pivot_table(
     #index="ASSERTED_YEAR", columns="CLAIM_TYPE", values="TOTAL_INCURRED", aggfunc="sum", fill_value=0
