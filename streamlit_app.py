@@ -38,12 +38,37 @@ loss_type = st.multiselect(
     df.LOSS_TYPE.unique(),
     ["PROF LIAB", "GEN LIAB", "ADMIN"],
 )
+# Show a multiselect widget with the agency parent.
+agency_parent = st.multiselect(
+    "Agency Parent",
+    df.AGENCY_PARENT.unique(),
+    df.AGENCY_PARENT.unique()[:3] if len(df.AGENCY_PARENT.unique()) > 3 else df.AGENCY_PARENT.unique(),
+)
+
+# Dynamically filter AGENCY_NAME options based on selected AGENCY_PARENT
+if agency_parent:
+    agency_name_options = sorted(df[df["AGENCY_PARENT"].isin(agency_parent)]["AGENCY_NAME"].unique())
+else:
+    agency_name_options = sorted(df["AGENCY_NAME"].unique())
+
+# Show a multiselect widget for AGENCY_NAME
+agency_name = st.multiselect(
+    "Agency Name",
+    agency_name_options,
+    agency_name_options[:3] if len(agency_name_options) > 3 else agency_name_options,
+)
 
 # Show a slider widget with the years using `st.slider`.
 years = st.slider("Years", 1995, 2006, (2020, 2025))
 
 # Filter the dataframe based on the widget input and reshape it.
-df_filtered = df[(df["CLAIM_TYPE"].isin(claim_type)) & (df["LOSS_TYPE"].isin(loss_type)) & (df["ASSERTED_YEAR"].between(years[0], years[1]))]
+df_filtered = df[
+    (df["CLAIM_TYPE"].isin(claim_type)) &
+    (df["LOSS_TYPE"].isin(loss_type)) &
+    (df["AGENCY_PARENT"].isin(agency_parent)) &
+    (df["AGENCY_NAME"].isin(agency_name)) &
+    (df["ASSERTED_YEAR"].between(years[0], years[1]))
+]
 df_reshaped = df_filtered[['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION']]
     #.pivot_table(
     #index="ASSERTED_YEAR", columns="CLAIM_TYPE", values="TOTAL_INCURRED", aggfunc="sum", fill_value=0
@@ -55,9 +80,9 @@ st.header("Search", divider=True)
 st.write("Try the following combinations: fox & hole & rabbit, Jack & Jill & hill, England & cricket & weekend, fox & cat & over, failure & diagnosis & hypertension, fox & clever & jumped")
 
 # Use a text_input to get the keywords to filter the dataframe
-text_search1 = st.text_input("Primary Search (Diagnosis)", value="fox")
-text_search2 = st.text_input("Secondary Search (Service)", value="pathologist")
-text_search3 = st.text_input("Tertiary Search (Issue)", value="clever")
+text_search1 = st.text_input("Primary Search (Diagnosis)", value="failed")
+text_search2 = st.text_input("Secondary Search (Service)", value="pain")
+text_search3 = st.text_input("Tertiary Search (Issue)", value="window")
 
 # Filter the dataframe using masks
 m1 = df_reshaped["NOTE_DESCRIPTION"].str.contains(text_search1)
