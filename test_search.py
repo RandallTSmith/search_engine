@@ -1,5 +1,5 @@
 import pandas as pd
-from streamlit_app import primary_mask
+from streamlit2_app import primary_mask
 
 def test_primary_mask_exact():
     s = pd.Series(["the pain", "painful", "hospital", "pain management"])
