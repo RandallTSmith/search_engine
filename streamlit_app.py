@@ -81,7 +81,8 @@ df_reshaped = df_reshaped.sort_values(by="ASSERTED_YEAR", ascending=False)
 def primary_mask(series, search_text, threshold, match_type):
     terms = [t.strip() for t in search_text.split(",") if t.strip()]
     if not terms:
-        return pd.Series([True] * len(series))
+        # Return a mask with the same index as the input series
+        return pd.Series([True] * len(series), index=series.index)
     if match_type == "Exact match (default)":
         def count_matches(text):
             return sum(bool(re.search(r"\b{}\b".format(re.escape(term)), str(text), flags=re.IGNORECASE)) for term in terms)
@@ -140,7 +141,7 @@ col1, col2 = st.columns([3, 1])
 with col1:
     primary_terms = st.text_input(
         "Service or Department (comma-separated words/phrases)", 
-        value="Pain, Hospital, fail"
+        value=""
     )
 with col2:
     primary_terms_list = [t.strip() for t in primary_terms.split(",") if t.strip()]
@@ -160,33 +161,40 @@ with st.expander("Show primary mask sum", expanded=False):
 df_after_primary = df_reshaped[m1].reset_index(drop=True)
 
 # Secondary search section
-if primary_terms.strip():
-    st.markdown("### Secondary Search")
-    col3, col4 = st.columns([3, 1])
-    with col3:
-        secondary_terms = st.text_input(
-            "Diagnosis (comma-separated words/phrases)", 
-            value="legal, time"
-        )
-    with col4:
-        secondary_terms_list = [t.strip() for t in secondary_terms.split(",") if t.strip()]
-        max_threshold2 = max(1, len(secondary_terms_list))
-        secondary_threshold = st.number_input(
-            "Secondary Threshold", 
-            min_value=1, 
-            max_value=max_threshold2, 
-            value=1, 
-            step=1,
-            help="Minimum number of secondary search terms that must appear in a note."
-        )
-
-    m2 = primary_mask(df_after_primary["NOTE_DESCRIPTION"], secondary_terms, secondary_threshold, match_type)
-    with st.expander("Show secondary mask sum", expanded=False):
-        st.write("Rows matching secondary threshold:", m2.sum())
-    df_after_secondary = df_after_primary[m2].reset_index(drop=True)
-else:
+if df_after_primary.empty:
+    st.warning("No records found after primary search.")
     secondary_terms = ""
-    df_after_secondary = df_after_primary
+    df_after_secondary = df_after_primary  # will be empty
+else:
+    if primary_terms.strip():
+        st.markdown("### Secondary Search")
+        col3, col4 = st.columns([3, 1])
+        with col3:
+            secondary_terms = st.text_input(
+                "Diagnosis (comma-separated words/phrases)", 
+                value=""
+            )
+        with col4:
+            secondary_terms_list = [t.strip() for t in secondary_terms.split(",") if t.strip()]
+            max_threshold2 = max(1, len(secondary_terms_list))
+            secondary_threshold = st.number_input(
+                "Secondary Threshold", 
+                min_value=1, 
+                max_value=max_threshold2, 
+                value=1, 
+                step=1,
+                help="Minimum number of secondary search terms that must appear in a note."
+            )
+
+        m2 = primary_mask(df_after_primary["NOTE_DESCRIPTION"], secondary_terms, secondary_threshold, match_type)
+        with st.expander("Show secondary mask sum", expanded=False):
+            st.write("Rows matching secondary threshold:", m2.sum())
+        df_after_secondary = df_after_primary[m2].reset_index(drop=True)
+        if df_after_secondary.empty:
+            st.warning("No records found after secondary search.")
+    else:
+        secondary_terms = ""
+        df_after_secondary = df_after_primary
 
 # third search section
 if primary_terms.strip() and secondary_terms.strip():
@@ -195,7 +203,7 @@ if primary_terms.strip() and secondary_terms.strip():
     with col5:
         tertiary_terms = st.text_input(
             "Issue (comma-separated words/phrases)", 
-            value="treatment"
+            value=""
         )
     with col6:
         tertiary_terms_list = [t.strip() for t in tertiary_terms.split(",") if t.strip()]
@@ -230,7 +238,7 @@ num_unique_cases = df_search["CLAIM_NUMBER"].nunique() if not df_search.empty el
 st.success(f"**Number of Records Found:** {num_rec}")
 st.info(f"**Number of Unique Case Numbers Found:** {num_unique_cases}")
 
-# Only show the original notes (with punctuation) to the user
 display_cols = ['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION_ORIG']
-df_display = df_search[display_cols].rename(columns={"NOTE_DESCRIPTION_ORIG": "NOTE_DESCRIPTION"})
+existing_cols = [col for col in display_cols if col in df_search.columns]
+df_display = df_search[existing_cols].rename(columns={"NOTE_DESCRIPTION_ORIG": "NOTE_DESCRIPTION"})
 st.dataframe(df_display)
