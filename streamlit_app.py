@@ -1,15 +1,20 @@
 
-import altair as alt
 import pandas as pd
 import streamlit as st
 import re
+
 
 # Show the page title and description.
 st.set_page_config(page_title="Search Engine", page_icon="🔍")
 st.title("🔍 Search Engine")
 st.write(
     """
-    Just click on the widgets below to explore!
+    - Choose your search criteria using the widgets below.
+    
+    - You can also search for specific terms in the notes associated with each claim.
+    
+    - The results will be displayed in a table below.
+        - You can export the results to a CSV file using the button at the bottom of the page.
     """
 )
 
@@ -17,10 +22,12 @@ st.write(
 # reruns (e.g. if the user interacts with the widgets).
 @st.cache_data
 def load_data():
-    # path to test data CSV file
     df = pd.read_csv('test_claim_data.csv')
-    # manipulate data
     df['ASSERTED_YEAR'] = pd.DatetimeIndex(df['ASSERTED_DATE']).year
+    # Keep the original notes for display/export
+    df['NOTE_DESCRIPTION_ORIG'] = df['NOTE_DESCRIPTION']
+    # Remove special characters from NOTE_DESCRIPTION (keep letters, numbers, spaces) for searching
+    df['NOTE_DESCRIPTION'] = df['NOTE_DESCRIPTION'].astype(str).str.replace(r'[^A-Za-z0-9 ]+', '', regex=True)
     return df
 
 df = load_data()
@@ -68,17 +75,14 @@ df_filtered = df[
     (df["AGENCY_NAME"].isin(agency_name)) &
     (df["ASSERTED_YEAR"].between(years[0], years[1]))
 ]
-df_reshaped = df_filtered[['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION']]
-    #.pivot_table(
-    #index="ASSERTED_YEAR", columns="CLAIM_TYPE", values="TOTAL_INCURRED", aggfunc="sum", fill_value=0
-    #)
+df_reshaped = df_filtered[['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION','NOTE_DESCRIPTION_ORIG']]
 df_reshaped = df_reshaped.sort_values(by="ASSERTED_YEAR", ascending=False)
 
 def primary_mask(series, search_text, threshold, match_type):
     terms = [t.strip() for t in search_text.split(",") if t.strip()]
     if not terms:
         return pd.Series([True] * len(series))
-    if match_type == "Word boundary (default)":
+    if match_type == "Exact match (default)":
         def count_matches(text):
             return sum(bool(re.search(r"\b{}\b".format(re.escape(term)), str(text), flags=re.IGNORECASE)) for term in terms)
     else:
@@ -92,29 +96,44 @@ def or_mask(series, search_text, match_type):
     terms = [t.strip() for t in search_text.split(",") if t.strip()]
     if not terms:
         return pd.Series([True] * len(series))
-    if match_type == "Word boundary (default)":
+    if match_type == "Exact match (default)":
         pattern = "|".join([r"\b{}\b".format(re.escape(term)) for term in terms])
         return series.str.contains(pattern, case=False, regex=True, na=False)
     else:
         return series.apply(lambda x: any(term.lower() in str(x).lower() for term in terms))
+
+
+
 # --- Search Section ---
 st.header("Search", divider=True)
 
-st.write(
-    """
-    **Search Match Type**  
-    - *Word boundary* matches whole words/phrases (e.g. 'root' matches 'root', 'root’s', but not 'roots').  
-    - *Any part of word* matches substrings (e.g. 'root' matches 'roots', 'uprooting', etc).
-    """
-)
 
-# Match type toggle
+# Match type selection
 match_type = st.radio(
-    "Search Match Type",
-    ("Word boundary (default)", "Any part of word"),
+    "**Search Match Type**",
+    ("Exact match (default)", "Any part of word"),
     index=0,
     horizontal=True,
 )
+
+if match_type == "Exact match (default)":
+    st.info(
+        """
+        **Note:**  
+        "Exact match" finds your search term as a whole word or exact phrase anywhere in the text (case-insensitive).  
+        For example, searching for `pain` will match `pain`, `the pain`, or `pain management`, but **not** `painful` or `inpain`.
+        """
+    )
+
+if match_type == "Any part of word":
+    st.info(
+        """
+        **Note:**  
+        "Any part of word" matches your search term as a substring anywhere in the text.  
+        For example, searching for `deliver` will match `deliver`, `delivers`, `delivery`, `redelivered`, `undelivered`, and even `adeliverance`.  
+        This is broader than matching just the root word.
+        """
+    )
 
 st.markdown("### Primary Search")
 col1, col2 = st.columns([3, 1])
@@ -140,32 +159,78 @@ with st.expander("Show primary mask sum", expanded=False):
     st.write("Rows matching threshold:", m1.sum())
 df_after_primary = df_reshaped[m1].reset_index(drop=True)
 
-st.markdown("### Secondary Search")
-secondary_terms = st.text_input(
-    "Diagnosis (comma-separated words/phrases)", 
-    value="legal, time"
-)
-m2 = or_mask(df_after_primary["NOTE_DESCRIPTION"], secondary_terms, match_type)
-with st.expander("Show secondary mask sum", expanded=False):
-    st.write("Rows matching secondary search:", m2.sum())
-df_after_secondary = df_after_primary[m2].reset_index(drop=True)
+# Secondary search section
+if primary_terms.strip():
+    st.markdown("### Secondary Search")
+    col3, col4 = st.columns([3, 1])
+    with col3:
+        secondary_terms = st.text_input(
+            "Diagnosis (comma-separated words/phrases)", 
+            value="legal, time"
+        )
+    with col4:
+        secondary_terms_list = [t.strip() for t in secondary_terms.split(",") if t.strip()]
+        max_threshold2 = max(1, len(secondary_terms_list))
+        secondary_threshold = st.number_input(
+            "Secondary Threshold", 
+            min_value=1, 
+            max_value=max_threshold2, 
+            value=1, 
+            step=1,
+            help="Minimum number of secondary search terms that must appear in a note."
+        )
 
-st.markdown("### Tertiary Search")
-tertiary_terms = st.text_input(
-    "Issue (comma-separated words/phrases)", 
-    value="treatment"
-)
-m3 = or_mask(df_after_secondary["NOTE_DESCRIPTION"], tertiary_terms, match_type)
-with st.expander("Show tertiary mask sum", expanded=False):
-    st.write("Rows matching tertiary search:", m3.sum())
-df_search = df_after_secondary[m3].reset_index(drop=True)
+    m2 = primary_mask(df_after_primary["NOTE_DESCRIPTION"], secondary_terms, secondary_threshold, match_type)
+    with st.expander("Show secondary mask sum", expanded=False):
+        st.write("Rows matching secondary threshold:", m2.sum())
+    df_after_secondary = df_after_primary[m2].reset_index(drop=True)
+else:
+    secondary_terms = ""
+    df_after_secondary = df_after_primary
 
-# --- Results Section ---
+# third search section
+if primary_terms.strip() and secondary_terms.strip():
+    st.markdown("### Tertiary Search")
+    col5, col6 = st.columns([3, 1])
+    with col5:
+        tertiary_terms = st.text_input(
+            "Issue (comma-separated words/phrases)", 
+            value="treatment"
+        )
+    with col6:
+        tertiary_terms_list = [t.strip() for t in tertiary_terms.split(",") if t.strip()]
+        max_threshold3 = max(1, len(tertiary_terms_list))
+        tertiary_threshold = st.number_input(
+            "Tertiary Threshold", 
+            min_value=1, 
+            max_value=max_threshold3, 
+            value=1, 
+            step=1,
+            help="Minimum number of tertiary search terms that must appear in a note."
+        )
+
+    if df_after_secondary.empty:
+        st.warning("No records found after secondary search.")
+        df_search = df_after_secondary  # will be empty
+        tertiary_mask_sum = 0
+    else:
+        m3 = primary_mask(df_after_secondary["NOTE_DESCRIPTION"], tertiary_terms, tertiary_threshold, match_type)
+        with st.expander("Show tertiary mask sum", expanded=False):
+            st.write("Rows matching tertiary threshold:", m3.sum())
+        df_search = df_after_secondary[m3].reset_index(drop=True)
+        tertiary_mask_sum = m3.sum()
+else:
+    df_search = df_after_secondary
+
+#Results Section
 st.markdown("## Results")
 num_rec = df_search.shape[0]
-num_unique_cases = df_search["CLAIM_NUMBER"].nunique()
+num_unique_cases = df_search["CLAIM_NUMBER"].nunique() if not df_search.empty else 0
 
 st.success(f"**Number of Records Found:** {num_rec}")
 st.info(f"**Number of Unique Case Numbers Found:** {num_unique_cases}")
 
-st.dataframe(df_search)
+# Only show the original notes (with punctuation) to the user
+display_cols = ['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION_ORIG']
+df_display = df_search[display_cols].rename(columns={"NOTE_DESCRIPTION_ORIG": "NOTE_DESCRIPTION"})
+st.dataframe(df_display)
