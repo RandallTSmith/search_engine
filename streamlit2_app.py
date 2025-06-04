@@ -15,23 +15,32 @@ def show_mask_sum(label, mask):
 
 # --- Streamlit UI ---
 st.set_page_config(page_title="Search Engine", page_icon="🔍", layout="wide")
-st.title("🔍 Search Engine")
 st.markdown(
     """
     <style>
-    .main .block-container {padding-top: 2rem;}
-    .stRadio > label {font-weight: bold;}
-    .stMultiSelect > label {font-weight: bold;}
-    .stSlider > label {font-weight: bold;}
+    .block-container {
+        max-width: 1500px;
+        margin: auto;
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    html, body, [class*="css"]  {
+        font-size: 20px !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+st.title("🔍 Search Engine")
 st.info(
-    "- **Choose your search criteria using the widgets below.**\n"
-    "- You can also search for specific terms in the notes associated with each claim.\n"
-    "- The results will be displayed in a table below.\n"
-    "- You can export the results to a CSV file using the button at the bottom of the page."
+    """
+    **How to use:**  
+    1. **Filter claims** using the options below.  
+    2. **Search notes** for specific terms.  
+    3. **View and export results** at the bottom.
+    """,
+    icon="ℹ️"
 )
 
 @st.cache_data
@@ -45,39 +54,35 @@ def load_data():
 df = load_data()
 
 # --- Filters Section ---
-st.markdown("### 1. Filter Claims", help="Narrow down the dataset before searching notes.")
-with st.container():
-    colA, colB, colC, colD = st.columns([2,2,2,2])
-    with colA:
-        claim_type = st.multiselect(
-            "Claim Type",
-            df.CLAIM_TYPE.unique(),
-            ["SUIT", "CLAIM", "ALERT"],
-        )
-    with colB:
-        loss_type = st.multiselect(
-            "Loss Type",
-            df.LOSS_TYPE.unique(),
-            ["PROF LIAB", "GEN LIAB", "ADMIN"],
-        )
-    with colC:
-        agency_parent = st.multiselect(
-            "Agency Parent",
-            df.AGENCY_PARENT.unique(),
-            df.AGENCY_PARENT.unique()[:3] if len(df.AGENCY_PARENT.unique()) > 3 else df.AGENCY_PARENT.unique(),
-        )
-    with colD:
-        if agency_parent:
-            agency_name_options = sorted(df[df["AGENCY_PARENT"].isin(agency_parent)]["AGENCY_NAME"].unique())
-        else:
-            agency_name_options = sorted(df["AGENCY_NAME"].unique())
-        agency_name = st.multiselect(
-            "Agency Name",
-            agency_name_options,
-            agency_name_options[:3] if len(agency_name_options) > 3 else agency_name_options,
-        )
+st.markdown("## 1. Filter Claims")
+with st.expander("Show/Hide Claim Filters", expanded=True):
+    claim_type = st.multiselect(
+        "Claim Type",
+        df.CLAIM_TYPE.unique(),
+        ["SUIT", "CLAIM", "ALERT"],
+    )
+    loss_type = st.multiselect(
+        "Loss Type",
+        df.LOSS_TYPE.unique(),
+        ["PROF LIAB", "GEN LIAB", "ADMIN"],
+    )
+    agency_parent = st.multiselect(
+        "Agency Parent",
+        df.AGENCY_PARENT.unique(),
+        df.AGENCY_PARENT.unique()[:3] if len(df.AGENCY_PARENT.unique()) > 3 else df.AGENCY_PARENT.unique(),
+        help="Select one or more parent agencies. Agency Name options will update based on your selection."
+    )
+    agency_name_options = (
+        sorted(df[df["AGENCY_PARENT"].isin(agency_parent)]["AGENCY_NAME"].unique())
+        if agency_parent else sorted(df["AGENCY_NAME"].unique())
+    )
+    agency_name = st.multiselect(
+        "↳ Agency Name (filtered by Agency Parent)",
+        agency_name_options,
+        agency_name_options[:3] if len(agency_name_options) > 3 else agency_name_options,
+        help="Agency Name options are filtered by your Agency Parent selection."
+    )
 
-st.markdown("---")
 years = st.slider("Years (Asserted)", 1995, 2006, (2015, 2025))
 
 df_filtered = df[
@@ -91,7 +96,7 @@ df_reshaped = df_filtered[['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE
 df_reshaped = df_reshaped.sort_values(by="ASSERTED_YEAR", ascending=False)
 
 # --- Search Section ---
-st.markdown("### 2. Search Notes", help="Search for terms in the notes fields.")
+st.markdown("## 2. Search Notes")
 
 match_type = st.radio(
     "**Search Match Type**",
@@ -108,13 +113,13 @@ if match_type == "Exact match (default)":
     )
 else:
     st.info(
-        "🔎 **Any part of word:** Matches your search term as a substring anywhere in the text.<br>"
+        "🔎 **Any part of word:** Matches your search term as a substring anywhere in the text."
         "E.g., searching for `deliver` will match `deliver`, `delivers`, `delivery`, `redelivered`, `undelivered`, and even `adeliverance`.",
         icon="ℹ️"
     )
 
 # --- Primary Search ---
-st.markdown("#### Primary Search")
+st.markdown("### Primary Search")
 col1, col2 = st.columns([3, 1])
 with col1:
     primary_terms = st.text_input(
@@ -158,7 +163,7 @@ if df_after_primary.empty:
     df_after_secondary = df_after_primary  # will be empty
 else:
     if primary_terms.strip():
-        st.markdown("#### Secondary Search")
+        st.markdown("### Secondary Search")
         col3, col4 = st.columns([3, 1])
         with col3:
             secondary_terms = st.text_input(
@@ -188,7 +193,7 @@ else:
 
 # --- Tertiary Search ---
 if primary_terms.strip() and secondary_terms.strip():
-    st.markdown("#### Tertiary Search")
+    st.markdown("### Tertiary Search")
     col5, col6 = st.columns([3, 1])
     with col5:
         tertiary_terms = st.text_input(
@@ -221,7 +226,7 @@ else:
 
 # --- Results Section ---
 st.markdown("---")
-st.markdown("### 3. Results")
+st.markdown("## 3. Results")
 num_rec = df_search.shape[0]
 num_unique_cases = df_search["CLAIM_NUMBER"].nunique() if not df_search.empty else 0
 
