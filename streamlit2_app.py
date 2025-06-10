@@ -3,6 +3,10 @@ import streamlit as st
 import re
 import io
 
+# --- Load Data ---
+df = pd.read_csv("test_claim_data_update1.csv")
+df["ASSERTED_YEAR"] = pd.to_datetime(df["ASSERTED_DATE"], errors="coerce").dt.year
+
 # --- Helper Functions ---
 def parse_terms(term_string):
     return [t.strip() for t in term_string.split(",") if t.strip()]
@@ -11,7 +15,7 @@ def get_max_threshold(terms_list):
     return max(1, len(terms_list))
 
 def show_mask_sum(label, mask):
-    st.write(f"Records matching {label} search: {int(mask.sum())}")
+    st.write(f"Records matching after {label} search: {int(mask.sum())}")
 
 def select_all_multiselect(label, options, default=None, key_prefix="", help=None):
     """
@@ -76,14 +80,9 @@ def select_all_multiselect(label, options, default=None, key_prefix="", help=Non
 def reset_all_filters():
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-
-def highlight_terms(text, terms):
-    if not terms:
-        return text
-    for term in terms:
-        if term:
-            text = re.sub(f"({re.escape(term)})", r"<mark>\1</mark>", text, flags=re.IGNORECASE)
-    return text
+    st.session_state["primary_terms"] = ""
+    st.session_state["secondary_terms"] = ""
+    st.session_state["tertiary_terms"] = ""
 
 try:
     st.set_page_config(page_title="Search Engine", page_icon="🔍", layout="wide")
@@ -117,11 +116,13 @@ try:
         unsafe_allow_html=True,
     )
 
-    st.title("🔍 Search Engine")
-    if st.button("🔄 Reset All Filters & Searches"):
-        reset_all_filters()
-        st.rerun()
+    # --- Sticky Reset Button in Sidebar ---
+    with st.sidebar:
+        st.button("🔄 Reset All Filters & Searches", on_click=reset_all_filters)
+        st.markdown("---")
 
+    # --- Section Headings and Dividers ---
+    st.title("🔍 Search Engine")
     st.info(
         """
         **How to use:**  
@@ -131,41 +132,40 @@ try:
         """,
         icon="ℹ️"
     )
-
-    @st.cache_data
-    def load_data():
-        df = pd.read_csv('test_claim_data_update1.csv')
-        df['ASSERTED_YEAR'] = pd.DatetimeIndex(df['ASSERTED_DATE']).year
-        df['NOTE_DESCRIPTION_ORIG'] = df['NOTE_DESCRIPTION']
-        df['NOTE_DESCRIPTION'] = df['NOTE_DESCRIPTION'].astype(str).str.replace(r'[^A-Za-z0-9 ]+', '', regex=True)
-        return df
-
-    df = load_data()
-
-    # --- Filters Section ---
     st.markdown("## 1. Filter Claims")
-    with st.expander("🔎 Filter Claims", expanded=True):
-        st.markdown("#### Claim Info")
+    st.divider()
+
+    # --- Show Filter Counts in Labels ---
+    def label_with_count(label, options):
+        return f"{label} ({len(options)})"
+
+    with st.expander("Claim Info Filters", expanded=True):
         col1, col2 = st.columns(2)
         with col1:
+            claim_type_options = sorted(df.CLAIM_TYPE.dropna().unique())
+            top_claim_types = df["CLAIM_TYPE"].value_counts().head(3).index.tolist()
             claim_type = select_all_multiselect(
-                "Claim Type",
-                sorted(df.CLAIM_TYPE.dropna().unique()),
-                default=["SUIT", "CLAIM", "ALERT"],
+                label_with_count("Claim Type", claim_type_options),
+                claim_type_options,
+                default=top_claim_types,
                 key_prefix="claim_type"
             )
+            loss_type_options = sorted(df.LOSS_TYPE.dropna().unique())
+            top_loss_types = df["LOSS_TYPE"].value_counts().head(3).index.tolist()
             loss_type = select_all_multiselect(
-                "Loss Type",
-                sorted(df.LOSS_TYPE.dropna().unique()),
-                default=["PROF LIAB", "GEN LIAB", "ADMIN"],
+                label_with_count("Loss Type", loss_type_options),
+                loss_type_options,
+                default=top_loss_types,
                 key_prefix="loss_type"
             )
-            years = st.slider("Years (Asserted)", 1995, 2006, (2015, 2025))
+            years = st.slider("Years (Asserted)", int(df['ASSERTED_YEAR'].min()), int(df['ASSERTED_YEAR'].max()), (int(df['ASSERTED_YEAR'].min()), int(df['ASSERTED_YEAR'].max())))
         with col2:
+            agency_parent_options = sorted(df.AGENCY_PARENT.dropna().unique())
+            top_agency_parents = df["AGENCY_PARENT"].value_counts().head(3).index.tolist()
             agency_parent = select_all_multiselect(
-                "Agency Parent",
-                sorted(df.AGENCY_PARENT.dropna().unique()),
-                default=sorted(df.AGENCY_PARENT.dropna().unique())[:3] if len(df.AGENCY_PARENT.dropna().unique()) > 3 else sorted(df.AGENCY_PARENT.dropna().unique()),
+                label_with_count("Agency Parent", agency_parent_options),
+                agency_parent_options,
+                default=top_agency_parents,
                 key_prefix="agency_parent",
                 help="Select one or more parent agencies. Agency Name options will update based on your selection."
             )
@@ -173,48 +173,59 @@ try:
                 sorted(df[df["AGENCY_PARENT"].isin(agency_parent)]["AGENCY_NAME"].dropna().unique())
                 if agency_parent else sorted(df["AGENCY_NAME"].dropna().unique())
             )
+            # Toast/info message for dynamic default
+            agency_name_key = "agency_name"
+            if agency_name_key in st.session_state:
+                prev_options = set(st.session_state.get(f"{agency_name_key}_options", []))
+                new_options = set(agency_name_options)
+                if prev_options != new_options:
+                    st.session_state[agency_name_key] = agency_name_options
+            st.session_state[f"{agency_name_key}_options"] = agency_name_options
+            top_agency_names = pd.Series(agency_name_options).value_counts().head(3).index.tolist()
             agency_name = select_all_multiselect(
-                "Agency Name (filtered by Agency Parent)",
+                label_with_count("Agency Name", agency_name_options),
                 agency_name_options,
-                default=agency_name_options[:3] if len(agency_name_options) > 3 else agency_name_options,
+                default=top_agency_names,
                 key_prefix="agency_name",
                 help="Agency Name options are filtered by your Agency Parent selection."
             )
-        
-        st.markdown("#### Department & Injury")
+
+    with st.expander("Department, Injury, and Severity Filters", expanded=False):
         col3, col4 = st.columns(2)
         with col3:
-            # New: Department filter
             department_desc_options = sorted(df["DEPARTMENT_DESC"].dropna().unique())
+            top_departments = df["DEPARTMENT_DESC"].value_counts().head(3).index.tolist()
             department_desc = select_all_multiselect(
-                "Department",
+                label_with_count("Department", department_desc_options),
                 department_desc_options,
-                default=department_desc_options[:5] if len(department_desc_options) > 5 else department_desc_options,
+                default=top_departments,
                 key_prefix="department_desc",
                 help="Filter by department description."
             )
-            # New: Injury filter
             injury_desc_options = sorted(df["INJURY_DESC"].dropna().unique())
+            top_injuries = df["INJURY_DESC"].value_counts().head(3).index.tolist()
             injury_desc = select_all_multiselect(
-                "Injury",
+                label_with_count("Injury", injury_desc_options),
                 injury_desc_options,
-                default=injury_desc_options[:5] if len(injury_desc_options) > 5 else injury_desc_options,
+                default=top_injuries,
                 key_prefix="injury_desc",
                 help="Filter by injury description."
             )
         with col4:
-            # New: Severity filter
             severity_options = sorted(df["SEVERITY"].dropna().unique())
+            top_severities = df["SEVERITY"].value_counts().head(3).index.tolist()
             severity = select_all_multiselect(
-                "Severity",
+                label_with_count("Severity", severity_options),
                 severity_options,
-                default=severity_options,
+                default=top_severities,
                 key_prefix="severity",
                 help="Filter by severity."
             )
 
     if not (claim_type and loss_type and agency_parent and agency_name and department_desc and injury_desc and severity):
         st.warning("Please select at least one option in **every filter** above to see results.", icon="⚠️")
+
+
 
     def isin_or_na(series, selected):
         return series.isin(selected) | series.isna()
@@ -229,7 +240,7 @@ try:
         isin_or_na(df["INJURY_DESC"], injury_desc) &
         isin_or_na(df["SEVERITY"], severity)
     ]
-    df_reshaped = df_filtered[['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION','NOTE_DESCRIPTION_ORIG']]
+    df_reshaped = df_filtered[['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION']]
     df_reshaped = df_reshaped.sort_values(by="ASSERTED_YEAR", ascending=False)
 
     # --- Search Section ---
@@ -256,26 +267,14 @@ try:
             icon="ℹ️"
         )
 
-    # --- Fuzzy Search Option ---
-    fuzzy = st.checkbox("Enable Fuzzy Search (typo-tolerant)", value=False)
-    if fuzzy:
-        try:
-            from rapidfuzz import fuzz
-        except ImportError:
-            st.error("Please install rapidfuzz: `pip3 install rapidfuzz`")
-            fuzz = None
-        fuzzy_score = 70  # Lower = more tolerant, fixed value
-    else:
-        fuzz = None
-        fuzzy_score = 80  # Default for non-fuzzy (not really used)
-
     # --- Primary Search ---
     st.markdown("### Primary Search")
     col1, col2 = st.columns([3, 1])
     with col1:
         primary_terms = st.text_input(
-            "Service or Department (comma-separated words/phrases)", 
-            value=""
+            "comma-separated words/phrases", 
+            value="",
+            key="primary_terms"
         )
     with col2:
         primary_terms_list = parse_terms(primary_terms)
@@ -289,14 +288,11 @@ try:
             help="Minimum number of primary search terms that must appear in a note."
         )
 
-    def primary_mask(series, search_text, threshold, match_type, fuzzy=False, fuzzy_score=80):
+    def primary_mask(series, search_text, threshold, match_type):
         terms = parse_terms(search_text)
         if not terms:
             return pd.Series([True] * len(series), index=series.index)
-        if fuzzy and fuzz is not None:
-            def count_matches(text):
-                return sum(fuzz.partial_ratio(term.lower(), str(text).lower()) >= fuzzy_score for term in terms)
-        elif match_type == "Exact match (default)":
+        if match_type == "Exact match (default)":
             def count_matches(text):
                 return sum(bool(re.search(r"\b{}\b".format(re.escape(term)), str(text), flags=re.IGNORECASE)) for term in terms)
         else:
@@ -306,95 +302,81 @@ try:
         count = series.apply(count_matches)
         return count >= threshold
 
-    m1 = primary_mask(df_reshaped["NOTE_DESCRIPTION"], primary_terms, primary_threshold, match_type, fuzzy=fuzzy, fuzzy_score=fuzzy_score)
+    m1 = primary_mask(df_reshaped["NOTE_DESCRIPTION"], primary_terms, primary_threshold, match_type)
     show_mask_sum("primary", m1)
     df_after_primary = df_reshaped[m1].reset_index(drop=True)
 
     # --- Secondary Search ---
-    if df_after_primary.empty:
-        st.warning("No records found after primary search.")
-        secondary_terms = ""
-        df_after_secondary = df_after_primary  # will be empty
-    else:
-        if primary_terms.strip():
-            st.markdown("### Secondary Search")
-            col3, col4 = st.columns([3, 1])
-            with col3:
-                secondary_terms = st.text_input(
-                    "Diagnosis (comma-separated words/phrases)", 
-                    value=""
-                )
-            with col4:
-                secondary_terms_list = parse_terms(secondary_terms)
-                max_threshold2 = get_max_threshold(secondary_terms_list)
-                secondary_threshold = st.number_input(
-                    "Secondary Threshold", 
-                    min_value=1, 
-                    max_value=max_threshold2, 
-                    value=1, 
-                    step=1,
-                    help="Minimum number of secondary search terms that must appear in a note."
-                )
+    st.markdown("### Secondary Search")
+    col3, col4 = st.columns([3, 1])
+    with col3:
+        secondary_terms = st.text_input(
+            "comma-separated words/phrases", 
+            value="",
+            key="secondary_terms"
+        )
+    with col4:
+        secondary_terms_list = parse_terms(secondary_terms)
+        max_threshold2 = get_max_threshold(secondary_terms_list)
+        secondary_threshold = st.number_input(
+            "Secondary Threshold", 
+            min_value=1, 
+            max_value=max_threshold2, 
+            value=1, 
+            step=1,
+            help="Minimum number of secondary search terms that must appear in a note."
+        )
 
-            m2 = primary_mask(df_after_primary["NOTE_DESCRIPTION"], secondary_terms, secondary_threshold, match_type, fuzzy=fuzzy, fuzzy_score=fuzzy_score)
-            show_mask_sum("secondary", m2)
-            df_after_secondary = df_after_primary[m2].reset_index(drop=True)
-            if df_after_secondary.empty:
-                st.warning("No records found after secondary search.")
-        else:
-            secondary_terms = ""
-            tertiary_terms = ""
-            df_after_secondary = df_after_primary
+    m2 = primary_mask(df_after_primary["NOTE_DESCRIPTION"], secondary_terms, secondary_threshold, match_type) if not df_after_primary.empty else pd.Series([False]*len(df_after_primary))
+    show_mask_sum("secondary", m2)
+    df_after_secondary = df_after_primary[m2].reset_index(drop=True) if not df_after_primary.empty else df_after_primary
 
     # --- Tertiary Search ---
-    if primary_terms.strip() and secondary_terms.strip():
-        st.markdown("### Tertiary Search")
-        col5, col6 = st.columns([3, 1])
-        with col5:
-            tertiary_terms = st.text_input(
-                "Issue (comma-separated words/phrases)", 
-                value=""
-            )
-        with col6:
-            tertiary_terms_list = parse_terms(tertiary_terms)
-            max_threshold3 = get_max_threshold(tertiary_terms_list)
-            tertiary_threshold = st.number_input(
-                "Tertiary Threshold", 
-                min_value=1, 
-                max_value=max_threshold3, 
-                value=1, 
-                step=1,
-                help="Minimum number of tertiary search terms that must appear in a note."
-            )
+    st.markdown("### Tertiary Search")
+    col5, col6 = st.columns([3, 1])
+    with col5:
+        tertiary_terms = st.text_input(
+            "comma-separated words/phrases", 
+            value="",
+            key="tertiary_terms"
+        )
+    with col6:
+        tertiary_terms_list = parse_terms(tertiary_terms)
+        max_threshold3 = get_max_threshold(tertiary_terms_list)
+        tertiary_threshold = st.number_input(
+            "Tertiary Threshold", 
+            min_value=1, 
+            max_value=max_threshold3, 
+            value=1, 
+            step=1,
+            help="Minimum number of tertiary search terms that must appear in a note."
+        )
 
-        if df_after_secondary.empty:
-            st.warning("No records found after secondary search.")
-            df_search = df_after_secondary  # will be empty
-            tertiary_mask_sum = 0
-        else:
-            m3 = primary_mask(df_after_secondary["NOTE_DESCRIPTION"], tertiary_terms, tertiary_threshold, match_type, fuzzy=fuzzy, fuzzy_score=fuzzy_score)
-            show_mask_sum("tertiary", m3)
-            df_search = df_after_secondary[m3].reset_index(drop=True)
-            tertiary_mask_sum = m3.sum()
+    if df_after_secondary.empty:
+        st.warning("No records found after secondary search.")
+        df_search = df_after_secondary  # will be empty
+        tertiary_mask_sum = 0
     else:
-        df_search = df_after_secondary
+        m3 = primary_mask(df_after_secondary["NOTE_DESCRIPTION"], tertiary_terms, tertiary_threshold, match_type)
+        show_mask_sum("tertiary", m3)
+        df_search = df_after_secondary[m3].reset_index(drop=True)
+        tertiary_mask_sum = m3.sum()
 
 
-    # --- Results Section ---
+    # --- Results Section (Paginate Results) ---
     st.markdown("---")
     st.markdown("## 3. Results")
-    num_rec = df_search.shape[0]
+
+    # Show summary stats
+    num_records = len(df_search)
     num_unique_cases = df_search["CLAIM_NUMBER"].nunique() if not df_search.empty else 0
+    st.info(f"**{num_records} records found** | **{num_unique_cases} unique cases**")
 
-    st.success(f"**Number of Records Found:** {num_rec}")
-    st.info(f"**Number of Unique Case Numbers Found:** {num_unique_cases}")
+    # Show all found records in the preview
+    st.dataframe(df_search, use_container_width=True)
 
-    display_cols = ['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION_ORIG']
-    existing_cols = [col for col in display_cols if col in df_search.columns]
-    df_display = df_search[existing_cols].rename(columns={"NOTE_DESCRIPTION_ORIG": "NOTE_DESCRIPTION"})
-    st.dataframe(df_display, use_container_width=True)
-    # Download button for CSV
-    csv = df_display.to_csv(index=False)
+    # Download all found records
+    csv = df_search.to_csv(index=False)
     st.download_button(
         "📥 Download Results as CSV",
         csv,
@@ -404,6 +386,6 @@ try:
     )
 
 except Exception as e:
-    st.error("😬 Oops, something went wrong. Please try again or contact support.")
+    st.error("😬 Oops, something went wrong. Please try again.")
     with st.expander("Show error details"):
         st.exception(e)
