@@ -240,12 +240,12 @@ try:
         isin_or_na(df["INJURY_DESC"], injury_desc) &
         isin_or_na(df["SEVERITY"], severity)
     ]
-    df_reshaped = df_filtered[['CLAIM_NUMBER','ASSERTED_YEAR','TOTAL_INCURRED','NOTE_TYPE','NOTE_DESCRIPTION']]
-    df_reshaped = df_reshaped.sort_values(by="ASSERTED_YEAR", ascending=False)
+    df_reshaped = df_filtered.sort_values(by="ASSERTED_YEAR", ascending=False)
 
     # --- Search Section ---
     st.markdown("---")
     st.markdown("## 2. Search Notes")
+    st.markdown("**Search the Note Description field** (e.g., service, department, diagnosis, or keyword)")
 
     match_type = st.radio(
         "**Search Match Type**",
@@ -272,9 +272,10 @@ try:
     col1, col2 = st.columns([3, 1])
     with col1:
         primary_terms = st.text_input(
-            "comma-separated words/phrases", 
+            "comma-separated words/phrases",
             value="",
-            key="primary_terms"
+            key="primary_terms",
+            help="Enter keywords or phrases to search in the Note Description field. Separate multiple terms with commas. E.g., pain, infection, 'loss of function'"
         )
     with col2:
         primary_terms_list = parse_terms(primary_terms)
@@ -363,7 +364,7 @@ try:
         tertiary_mask_sum = m3.sum()
 
 
-    # --- Results Section (Paginate Results) ---
+    # --- Results Section ---
     st.markdown("---")
     st.markdown("## 3. Results")
 
@@ -372,8 +373,20 @@ try:
     num_unique_cases = df_search["CLAIM_NUMBER"].nunique() if not df_search.empty else 0
     st.info(f"**{num_records} records found** | **{num_unique_cases} unique cases**")
 
+    # Define the full column order you want to show
+    all_columns = [
+        "AGENCY_ID", "AGENCY_NAME", "AGENCY_PARENT", "CLAIM_NUMBER", "ASSERTED_DATE",
+        "CLAIM_TYPE", "LOSS_TYPE", "CALC_VAP_ONLY_FLAG", "NOTE_TYPE", "NOTE_CREATION_DATE",
+        "NOTE_DESCRIPTION", "TOTAL_INCURRED", "DEPARTMENT_CODE", "DEPARTMENT_DESC",
+        "INJURY_CODE", "INJURY_DESC", "SEVERITY"
+    ]
+
     # Show all found records in the preview
-    st.dataframe(df_search, use_container_width=True)
+    show_all_cols = st.checkbox("Show all columns", value=False)
+    if show_all_cols:
+        st.dataframe(df_search[all_columns], use_container_width=True)
+    else:
+        st.dataframe(df_search[["CLAIM_NUMBER","ASSERTED_YEAR","TOTAL_INCURRED","NOTE_TYPE","NOTE_DESCRIPTION"]], use_container_width=True)
 
     # Download all found records
     csv = df_search.to_csv(index=False)
