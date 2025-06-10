@@ -240,7 +240,7 @@ try:
         isin_or_na(df["INJURY_DESC"], injury_desc) &
         isin_or_na(df["SEVERITY"], severity)
     ]
-    df_reshaped = df_filtered.sort_values(by="ASSERTED_YEAR", ascending=False
+    df_reshaped = df_filtered.sort_values(by="ASSERTED_YEAR", ascending=False)
 
     # --- Search Section ---
     st.markdown("---")
