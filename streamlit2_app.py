@@ -1,0 +1,425 @@
+import pandas as pd
+import streamlit as st
+import re
+import io
+
+# --- Load Data ---
+df = pd.read_csv("test_claim_data_update1.csv")
+df["ASSERTED_YEAR"] = pd.to_datetime(df["ASSERTED_DATE"], errors="coerce").dt.year
+df["CLAIM_TYPE"] = df["CLAIM_TYPE"].str.strip().str.title()
+df["LOSS_TYPE"] = df["LOSS_TYPE"].str.strip().str.title()
+
+# --- Helper Functions ---
+def parse_terms(term_string):
+    return [t.strip() for t in term_string.split(",") if t.strip()]
+
+def get_max_threshold(terms_list):
+    return max(1, len(terms_list))
+
+def show_mask_sum(label, mask):
+    st.write(f"Records matching after {label} search: {int(mask.sum())}")
+
+def select_all_multiselect(label, options, default=None, key_prefix="", help=None):
+    key_select_all = f"select_all_{key_prefix}"
+    key_multi = key_prefix
+
+    # Only set defaults if not already in session state
+    if key_multi not in st.session_state:
+        st.session_state[key_multi] = default if default is not None else options
+    if key_select_all not in st.session_state:
+        st.session_state[key_select_all] = set(st.session_state[key_multi]) == set(options)
+
+    # Sync logic
+    def sync_select_all():
+        if st.session_state[key_select_all]:
+            st.session_state[key_multi] = options
+        else:
+            st.session_state[key_multi] = []
+
+    def sync_multiselect():
+        st.session_state[key_select_all] = set(st.session_state[key_multi]) == set(options)
+
+    with st.container():
+        col_label, col_checkbox = st.columns([3, 1])
+        with col_label:
+            st.markdown(f"<span style='font-size:1.2em; font-weight:bold'>{label}</span>", unsafe_allow_html=True)
+        with col_checkbox:
+            st.markdown(
+                """
+                <style>
+                .small-checkbox label {
+                    font-size: 0.85em !important;
+                    color: #666 !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.checkbox(
+                "Select All",
+                value=st.session_state[key_select_all],
+                key=key_select_all,
+                on_change=sync_select_all,
+                help=f"Select all {label.lower()}s." if help is None else help,
+                label_visibility="visible",
+            )
+        selected = st.multiselect(
+            "Select options",
+            options,
+            key=key_multi,
+            on_change=sync_multiselect,
+            help=help,
+            label_visibility="collapsed"
+        )
+    return selected
+
+def reset_all_filters():
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.session_state["primary_terms"] = ""
+    st.session_state["secondary_terms"] = ""
+    st.session_state["tertiary_terms"] = ""
+
+try:
+    st.set_page_config(page_title="Search Engine", page_icon="🔍", layout="wide")
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            max-width: 1500px;
+            margin: auto;
+            padding-top: 2.5rem;
+            padding-bottom: 1rem;
+        }
+        html, body, [class*="css"]  {
+            font-size: 20px !important;
+        }
+        .small-checkbox label {
+            font-size: 0.85em !important;
+            color: #666 !important;
+        }
+        .select-all-small label {
+            font-size: 0.85em !important;
+            color: #666 !important;
+            margin-bottom: 0.5em !important;
+        }
+        mark {
+            background-color: #ffe066;
+            color: black;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # --- Sticky Reset Button in Sidebar ---
+    with st.sidebar:
+        st.button("🔄 Reset All Filters & Searches", on_click=reset_all_filters)
+        st.markdown("---")
+
+    # --- Section Headings and Dividers ---
+    st.title("🔍 Search Engine")
+    st.info(
+        """
+        **How to use:**  
+        1. **Filter claims** using the options below.  
+        2. **Search notes** for specific terms.  
+        3. **View and export results** at the bottom.
+        """,
+        icon="ℹ️"
+    )
+    st.markdown("## 1. Filter Claims")
+    st.divider()
+
+    # --- Show Filter Counts in Labels ---
+    def label_with_count(label, options):
+        return f"{label} ({len(options)})"
+
+    with st.expander("Claim Info Filters", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            # Claim Type: only "Suit" and "Claim", start blank
+            claim_type_options = [x for x in ["Suit", "Claim"] if x in df["CLAIM_TYPE"].unique()]
+            claim_type = select_all_multiselect(
+                label_with_count("Claim Type", claim_type_options),
+                claim_type_options,
+                default=[],  # start blank
+                key_prefix="claim_type"
+            )
+
+            # Loss Type: always allow "Professional Liability", start blank
+            loss_type_options = ["Professional Liability"]
+            loss_type = select_all_multiselect(
+                label_with_count("Loss Type", loss_type_options),
+                loss_type_options,
+                default=[],  # start blank
+                key_prefix="loss_type"
+            )
+
+            years = st.slider(
+                "Asserted Year",
+                int(df['ASSERTED_YEAR'].min()),
+                int(df['ASSERTED_YEAR'].max()),
+                (int(df['ASSERTED_YEAR'].min()), int(df['ASSERTED_YEAR'].max()))
+            )
+        with col2:
+            agency_parent_options = sorted(df.AGENCY_PARENT.dropna().unique())
+            agency_parent = select_all_multiselect(
+                label_with_count("Agency Parent", agency_parent_options),
+                agency_parent_options,
+                default=[],  # start blank
+                key_prefix="agency_parent",
+                help="Select one or more parent agencies. Agency Name options will update based on your selection."
+            )
+            agency_name_options = (
+                sorted(df[df["AGENCY_PARENT"].isin(agency_parent)]["AGENCY_NAME"].dropna().unique())
+                if agency_parent else sorted(df["AGENCY_NAME"].dropna().unique())
+            )
+            agency_name_key = "agency_name"
+            if agency_name_key in st.session_state:
+                prev_options = set(st.session_state.get(f"{agency_name_key}_options", []))
+                new_options = set(agency_name_options)
+                if prev_options != new_options:
+                    st.session_state[agency_name_key] = agency_name_options
+            st.session_state[f"{agency_name_key}_options"] = agency_name_options
+            agency_name = select_all_multiselect(
+                label_with_count("Agency Name", agency_name_options),
+                agency_name_options,
+                default=[],  # start blank
+                key_prefix="agency_name",
+                help="Agency Name options are filtered by your Agency Parent selection."
+            )
+
+    with st.expander("Department, Injury, and Severity Filters", expanded=False):
+        col3, col4 = st.columns(2)
+        with col3:
+            department_desc_options = sorted(df["DEPARTMENT_DESC"].dropna().unique())
+            department_desc = select_all_multiselect(
+                label_with_count("Department", department_desc_options),
+                department_desc_options,
+                default=[],  # start blank
+                key_prefix="department_desc",
+                help="Filter by department description."
+            )
+            injury_desc_options = sorted(df["INJURY_DESC"].dropna().unique())
+            injury_desc = select_all_multiselect(
+                label_with_count("Injury", injury_desc_options),
+                injury_desc_options,
+                default=[],  # start blank
+                key_prefix="injury_desc",
+                help="Filter by injury description."
+            )
+        with col4:
+            severity_options = sorted(df["SEVERITY"].dropna().unique())
+            severity = select_all_multiselect(
+                label_with_count("Severity", severity_options),
+                severity_options,
+                default=[],  # start blank
+                key_prefix="severity",
+                help="Filter by severity."
+            )
+
+    # --- Filtering Logic: Only filter if user selected something ---
+    def isin_or_na(series, selected):
+        return series.isin(selected) | series.isna()
+
+    mask = (
+        (df["CLAIM_TYPE"].isin(claim_type) if claim_type else True) &
+        (df["LOSS_TYPE"].isin(loss_type) if loss_type else True) &
+        (df["AGENCY_PARENT"].isin(agency_parent) if agency_parent else True) &
+        (df["AGENCY_NAME"].isin(agency_name) if agency_name else True) &
+        (df["ASSERTED_YEAR"].between(years[0], years[1]))
+    )
+    if department_desc:
+        mask &= isin_or_na(df["DEPARTMENT_DESC"], department_desc)
+    if injury_desc:
+        mask &= isin_or_na(df["INJURY_DESC"], injury_desc)
+    if severity:
+        mask &= isin_or_na(df["SEVERITY"], severity)
+
+    df_filtered = df[mask].sort_values(by="ASSERTED_YEAR", ascending=False)
+
+    # --- Search Section ---
+    st.markdown("---")
+    st.markdown("## 2. Search Notes")
+    st.markdown("**Search the Note Description field** (e.g., service, department, diagnosis, or keyword)")
+
+    with st.expander("What does 'Match Type' mean? (Click to expand)", expanded=False):
+        st.markdown("""
+**🔎 Exact match:**  
+Finds your search term as a whole word or exact phrase anywhere in the text (case-insensitive).  
+E.g., searching for `pain` will match `pain`, `the pain`, or `pain management`, but **not** `painful` or `inpain`.
+
+**🔎 Any part of word:**  
+Matches your search term as a substring anywhere in the text.  
+E.g., searching for `deliver` will match `deliver`, `delivers`, `delivery`, `redelivered`, `undelivered`, and even `adeliverance`.
+""")
+
+    # --- Primary Search ---
+    st.markdown("### Primary Search")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        primary_terms = st.text_input(
+            "comma-separated words/phrases",
+            value="",
+            key="primary_terms",
+            help="Enter keywords or phrases to search in the Note Description field. Separate multiple terms with commas. E.g., pain, infection, 'loss of function'"
+        )
+    with col2:
+        primary_match_type = st.radio(
+            "Match Type",
+            ("Exact match", "Any part of word"),
+            index=0,
+            key="primary_match_type",
+            horizontal=True,
+            help="Choose how to match your search terms for the primary search."
+        )
+    primary_terms_list = parse_terms(primary_terms)
+    max_threshold = get_max_threshold(primary_terms_list)
+    primary_threshold = st.number_input(
+        "Threshold", 
+        min_value=1, 
+        max_value=max_threshold, 
+        value=1, 
+        step=1,
+        help="Minimum number of primary search terms that must appear in a note."
+    )
+
+    def primary_mask(series, search_text, threshold, match_type):
+        terms = parse_terms(search_text)
+        if not terms:
+            return pd.Series([True] * len(series), index=series.index)
+        if match_type == "Exact match (default)":
+            def count_matches(text):
+                return sum(bool(re.search(r"\b{}\b".format(re.escape(term)), str(text), flags=re.IGNORECASE)) for term in terms)
+        else:
+            def count_matches(text):
+                text_lower = str(text).lower()
+                return sum(term.lower() in text_lower for term in terms)
+        count = series.apply(count_matches)
+        return count >= threshold
+
+    m1 = primary_mask(df_filtered["NOTE_DESCRIPTION"], primary_terms, primary_threshold, primary_match_type)
+    show_mask_sum("primary", m1)
+    df_after_primary = df_filtered[m1].reset_index(drop=True)
+
+    # --- Secondary Search ---
+    st.markdown("### Secondary Search")
+    col3, col4 = st.columns([3, 1])
+    with col3:
+        secondary_terms = st.text_input(
+            "comma-separated words/phrases", 
+            value="",
+            key="secondary_terms"
+        )
+    with col4:
+        secondary_match_type = st.radio(
+            "Match Type",
+            ("Exact match", "Any part of word"),
+            index=0,
+            key="secondary_match_type",
+            horizontal=True,
+            help="Choose how to match your search terms for the secondary search."
+        )
+    secondary_terms_list = parse_terms(secondary_terms)
+    max_threshold2 = get_max_threshold(secondary_terms_list)
+    secondary_threshold = st.number_input(
+        "Secondary Threshold", 
+        min_value=1, 
+        max_value=max_threshold2, 
+        value=1, 
+        step=1,
+        help="Minimum number of secondary search terms that must appear in a note."
+    )
+
+    m2 = primary_mask(df_after_primary["NOTE_DESCRIPTION"], secondary_terms, secondary_threshold, secondary_match_type) if not df_after_primary.empty else pd.Series([False]*len(df_after_primary))
+    show_mask_sum("secondary", m2)
+    df_after_secondary = df_after_primary[m2].reset_index(drop=True) if not df_after_primary.empty else df_after_primary
+
+    # --- Tertiary Search ---
+    st.markdown("### Tertiary Search")
+    col5, col6 = st.columns([3, 1])
+    with col5:
+        tertiary_terms = st.text_input(
+            "comma-separated words/phrases", 
+            value="",
+            key="tertiary_terms"
+        )
+    with col6:
+        tertiary_match_type = st.radio(
+            "Match Type",
+            ("Exact match", "Any part of word"),
+            index=0,
+            key="tertiary_match_type",
+            horizontal=True,
+            help="Choose how to match your search terms for the tertiary search."
+        )
+    tertiary_terms_list = parse_terms(tertiary_terms)
+    max_threshold3 = get_max_threshold(tertiary_terms_list)
+    tertiary_threshold = st.number_input(
+        "Tertiary Threshold", 
+        min_value=1, 
+        max_value=max_threshold3, 
+        value=1, 
+        step=1,
+        help="Minimum number of tertiary search terms that must appear in a note."
+    )
+
+    if df_after_secondary.empty:
+        st.warning("No records found after secondary search.")
+        df_search = df_after_secondary  # will be empty
+        tertiary_mask_sum = 0
+    else:
+        m3 = primary_mask(df_after_secondary["NOTE_DESCRIPTION"], tertiary_terms, tertiary_threshold, tertiary_match_type)
+        show_mask_sum("tertiary", m3)
+        df_search = df_after_secondary[m3].reset_index(drop=True)
+        tertiary_mask_sum = m3.sum()
+
+
+    # --- Results Section ---
+    st.markdown("---")
+    st.markdown("## 3. Results")
+
+    # Show summary stats
+    num_records = len(df_search)
+    num_unique_cases = df_search["CLAIM_NUMBER"].nunique() if not df_search.empty else 0
+    st.info(f"**{num_records} records found** | **{num_unique_cases} unique cases**")
+
+    # Define the full column order you want to show
+    all_columns = [
+        "AGENCY_ID", "AGENCY_NAME", "AGENCY_PARENT", "CLAIM_NUMBER", "ASSERTED_DATE",
+        "CLAIM_TYPE", "LOSS_TYPE", "CALC_VAP_ONLY_FLAG", "NOTE_TYPE", "NOTE_CREATION_DATE",
+        "NOTE_DESCRIPTION", "TOTAL_INCURRED", "DEPARTMENT_CODE", "DEPARTMENT_DESC",
+        "INJURY_CODE", "INJURY_DESC", "SEVERITY", "ASSERTED_YEAR"
+    ]
+    main_columns = ["CLAIM_NUMBER","ASSERTED_YEAR","TOTAL_INCURRED","NOTE_TYPE","NOTE_DESCRIPTION"]
+
+    show_all_cols = st.checkbox("Show all columns", value=False)
+
+    if df_search.empty:
+        # Show empty DataFrame with correct columns
+        if show_all_cols:
+            st.dataframe(pd.DataFrame(columns=all_columns), use_container_width=True)
+        else:
+            st.dataframe(pd.DataFrame(columns=main_columns), use_container_width=True)
+    else:
+        # Only show columns that exist in df_search
+        if show_all_cols:
+            st.dataframe(df_search[[col for col in all_columns if col in df_search.columns]], use_container_width=True)
+        else:
+            st.dataframe(df_search[[col for col in main_columns if col in df_search.columns]], use_container_width=True)
+
+    # Download all found records
+    csv = df_search.to_csv(index=False)
+    st.download_button(
+        "📥 Download Results as CSV",
+        csv,
+        "search_results.csv",
+        "text/csv",
+        key="download-csv"
+    )
+
+except Exception as e:
+    st.error("😬 Oops, something went wrong. Please try again.")
+    with st.expander("Show error details"):
+        st.exception(e)
